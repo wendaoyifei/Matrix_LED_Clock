@@ -295,3 +295,68 @@ uint8_t LEDMatrix::drawSmallChar(char c, int x, int y)
    }
    return fontWidth;
 }
+
+void LEDMatrix::scroll(scrollDirection direction, int x, int y, int width, int height, int step)
+{
+   uint8_t *frameBuffer = getFrameBuffer();
+   int cnt = 0;
+   switch (direction)
+   {
+   case scrollDirection::scrollUp:
+      // cnt = 7 * (N); // moving 7 rows of N segments
+      // memmove(frameBuffer, frameBuffer + N, cnt);
+      // memset(frameBuffer + cnt, 0, N); // Clear last row
+      break;
+
+   case scrollDirection::scrollDown:
+      // cnt = 7 * N; // moving 7 rows of N segments
+      // memmove(frameBuffer + N, frameBuffer, cnt);
+      // memset(frameBuffer, 0, N); // Clear first row
+      for (int i = x; i < (x + width); i++)
+      {
+         for (int j = (y + height - 1); j > y; j--)
+         {
+            bool downValue = getPixel(i, j);
+            bool upValue = getPixel(i, j - 1);
+            if (upValue != downValue)
+            {
+               setPixel(i, j, upValue);
+            }
+         }
+         setPixel(i, y, false);
+      }
+      break;
+
+   case scrollDirection::scrollRight:
+      // Scrolling right needs to be done by bit shifting every uint8_t in the frame buffer
+      // Carry is reset between rows
+      // for (int y = 0; y < 8; y++)
+      // {
+      //    uint8_t carry = 0x00;
+      //    for (int x = 0; x < N; x++)
+      //    {
+      //       uint8_t &v = frameBuffer[y * N + x];
+      //       uint8_t newCarry = v & 1;
+      //       v = (carry << 7) | (v >> 1);
+      //       carry = newCarry;
+      //    }
+      // }
+      break;
+
+   case scrollDirection::scrollLeft:
+      // Scrolling left needs to be done by bit shifting every uint8_t in the frame buffer
+      // Carry is reset between rows
+      // for (int y = 0; y < 8; y++)
+      // {
+      //    uint8_t carry = 0x00;
+      //    for (int x = N - 1; x >= 0; x--)
+      //    {
+      //       uint8_t &v = frameBuffer[y * N + x];
+      //       uint8_t newCarry = v & 0x80;
+      //       v = (carry >> 7) | (v << 1);
+      //       carry = newCarry;
+      //    }
+      // }
+      break;
+   }
+}

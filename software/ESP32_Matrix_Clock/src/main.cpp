@@ -30,19 +30,39 @@ void setup()
 
   // matrix.drawSmallChar('5', 24, 0);
   // matrix.drawSmallChar('5', 28, 0);
-  matrix.drawSmallString("58", strlen("58"), 24, 0, 1);
+  matrix.drawSmallString("58", strlen("50"), 24, 0, 1);
   matrix.display();
   // WiFiManager_Init();
   // WiFiManager_Scan();
   Serial.print("Setup End\r\n");
 }
 
+int count = 0;
+int number = 0;
 void loop()
 {
   // String input = Serial.readStringUntil('\n'); // read user intput
   // Serial.print("Received: ");                  // echo
   // Serial.println(input);
   // WiFiManager_Run();
+  for (int i = 0; i < 5; i++)
+  {
+    delay(100);
+  }
+  for (int i = 0; i < 5; i++)
+  {
+    matrix.scroll(LEDMatrixDriver::scrollDirection::scrollDown, 28, 2 + i, 3, 5 - i, 1);
+    matrix.display();
+    delay(100);
+  }
+  number++;
+  if (number == 10)
+  {
+    number = 0;
+  }
+
+  matrix.drawSmallChar(number + 0x30, 28, 0);
+  matrix.display();
 }
 
 #if 0

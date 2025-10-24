@@ -20,6 +20,8 @@ public:
    uint8_t drawSmallChar(char c, int x, int y);
 #endif
 
+   void scroll(scrollDirection direction, int x, int y, int width, int height, int step);
+
 private:
 };
 

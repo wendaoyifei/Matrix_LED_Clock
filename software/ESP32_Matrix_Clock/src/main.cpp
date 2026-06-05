@@ -1,68 +1,82 @@
 #include <Arduino.h>
 
-#include "WiFiManager.h"
-#include "LEDMatrix.h"
+#include "Clock.h"
 
-const uint8_t LEDMATRIX_CS_PIN = 5;
+Clock LEDMatrixClock;
 
-const int LEDMATRIX_SEGMENTS = 4;
-const int LEDMATRIX_WIDTH = LEDMATRIX_SEGMENTS * 8;
-
-// The LEDMatrixDriver class instance
-LEDMatrix matrix(LEDMATRIX_SEGMENTS, LEDMATRIX_CS_PIN);
+uint8_t level = 2;
 
 void setup()
 {
   Serial.begin(115200);
-  Serial.print("Setup Begin\r\n");
-  // init the display
-  matrix.setEnabled(true);
-  matrix.setIntensity(2); // 0 = low, 10 = high
-
-  // matrix.drawBigString("11:13", strlen("11:13"), 0, 0);
-  // matrix.drawBigString("1", strlen("1"), 0, 0);
-  // matrix.drawBigChar('5', 0, 0);
-  // matrix.drawBigChar('4', 6, 0);
-  // matrix.drawBigChar('2', 12, 0);
-  // matrix.drawBigChar('1', 18, 0);
-
-  matrix.drawBigString("15:56", strlen("15:56"), 0, 0, 0);
-
-  // matrix.drawSmallChar('5', 24, 0);
-  // matrix.drawSmallChar('5', 28, 0);
-  matrix.drawSmallString("58", strlen("50"), 24, 0, 1);
-  matrix.display();
-  // WiFiManager_Init();
-  // WiFiManager_Scan();
-  Serial.print("Setup End\r\n");
+  delay(1000);
+  LEDMatrixClock.Init();
 }
 
-int count = 0;
-int number = 0;
 void loop()
 {
-  // String input = Serial.readStringUntil('\n'); // read user intput
-  // Serial.print("Received: ");                  // echo
-  // Serial.println(input);
-  // WiFiManager_Run();
-  for (int i = 0; i < 5; i++)
+  if (Serial.available())
   {
-    delay(100);
-  }
-  for (int i = 0; i < 5; i++)
-  {
-    matrix.scroll(LEDMatrixDriver::scrollDirection::scrollDown, 28, 2 + i, 3, 5 - i, 1);
-    matrix.display();
-    delay(100);
-  }
-  number++;
-  if (number == 10)
-  {
-    number = 0;
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd == "plus")
+    {
+      if (++level > 0x0F)
+      {
+        level = 0x0F;
+      }
+      LEDMatrixClock.SetIntensity(level);
+      Serial.println(level);
+    }
+    else if (cmd == "minus")
+    {
+      if (level > 0)
+      {
+        level--;
+      }
+      LEDMatrixClock.SetIntensity(level);
+      Serial.println(level);
+    }
+    else if (cmd == "ntp")
+    {
+      LEDMatrixClock.WiFiNTP();
+    }
+    else if (cmd == "ap")
+    {
+      LEDMatrixClock.WiFiConfig();
+    }
+    else if (cmd == "check")
+    {
+      LEDMatrixClock.WiFiCheck();
+    }
+    else if (cmd == "disconn")
+    {
+    }
+    else if (cmd == "scan")
+    {
+    }
+    else if (cmd.startsWith("conn:"))
+    {
+      // 格式：conn:SSID:密码
+      int first = cmd.indexOf(':');
+      int second = cmd.indexOf(':', first + 1);
+      if (first != -1 && second != -1)
+      {
+        String ssid = cmd.substring(first + 1, second);
+        String pwd = cmd.substring(second + 1);
+      }
+      else
+      {
+        Serial.println("指令错误，格式：conn:WiFi名称:WiFi密码");
+      }
+    }
+    else
+    {
+      Serial.println("未知指令，请输入正确指令");
+    }
   }
 
-  matrix.drawSmallChar(number + 0x30, 28, 0);
-  matrix.display();
+  LEDMatrixClock.Loop();
 }
 
 #if 0

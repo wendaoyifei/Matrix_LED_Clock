@@ -1,157 +1,345 @@
-#include <WiFi.h>
-#include <WebServer.h>
+
+
 #include "WiFiManager.h"
-#include "Debug.h"
 #include "WebServerPages.h"
+#include "Clock.h"
 
-static const char *s_APSSID = "Maxtrix LED Clock";
-static IPAddress s_APIP(192, 168, 4, 1);
-static IPAddress s_APGateway(192, 168, 4, 1);
-static IPAddress s_APNetMask(255, 255, 255, 0);
-static String s_WiFiHTMLOptions;
-static WebServer s_WebServer;
-static String s_WiFiSSID;
-static String s_WiFiPass;
-
-static bool StartAP(void);
-static bool StartWebServer(void);
-static void WebServerHandleRoot(void);
-static void WebServerHandleNotFound(void);
-static void WebServerHandleConfigWiFi(void);
-
-bool WiFiManager_Init(void)
+WiFiManager *WiFiManager::Instance()
 {
-   bool result = StartAP();
-   if (result)
+   static WiFiManager sInstance;
+   return &sInstance;
+}
+
+bool WiFiManager::IsConnected()
+{
+   return (WiFi.status() == WL_CONNECTED) ? true : false;
+}
+
+void WiFiManager::Loop()
+{
+   if (mNewState != mCurState)
    {
-      result = StartWebServer();
+      StateExit();
+      mPreState = mCurState;
+      mCurState = mNewState;
+      StateEnter();
    }
-   return result;
+   StateRun();
 }
 
-void WiFiManager_Run(void)
+void WiFiManager::SetState(WiFiState state)
 {
-   s_WebServer.handleClient();
-}
-
-bool WiFiManager_Scan(void)
-{
-   bool result = false;
-   Debugln("开始扫描WiFi");
-   int n = WiFi.scanNetworks();
-   if (n)
+   if (state != WiFiState::INIT_STATE)
    {
-      Debug("扫描到");
-      Debug(n);
-      Debugln("个WIFI");
-      s_WiFiHTMLOptions = "";
-      for (size_t i = 0; i < n; i++)
-      {
-         int32_t rssi = WiFi.RSSI(i);
-         String signalStrength;
-         if (rssi >= -35)
-         {
-            signalStrength = " (信号极强)";
-         }
-         else if (rssi >= -50)
-         {
-            signalStrength = " (信号强)";
-         }
-         else if (rssi >= -70)
-         {
-            signalStrength = " (信号中)";
-         }
-         else
-         {
-            signalStrength = " (信号弱)";
-         }
-         // s_WiFiHTMLOptions += "<option value='" + WiFi.SSID(i) + "'>" + WiFi.SSID(i) + signalStrength + "</option>";
-         s_WiFiHTMLOptions += "<option value='" + WiFi.SSID(i) + "'>" + WiFi.SSID(i) + "</option>";
-         Debug("WiFi的名称(SSID):");
-         Debugln(WiFi.SSID(i));
-      }
-      result = true;
+      mNewState = state;
+   }
+}
+
+void WiFiManager::Init(const String &ApSsid, const String &ApPwd)
+{
+   mAPSSID = ApSsid;
+   mAPPWD = ApPwd;
+   if (Load())
+   {
+      Serial.print("Found ");
+      Serial.println(mSTASSID);
+      mNewState = WiFiState::CONNECTING_STATE;
    }
    else
    {
-      Debugln("没有扫描到可用的WiFi");
+      mNewState = WiFiState::STANDBY_STATE;
    }
-   return result;
 }
 
-static bool StartAP(void)
+bool WiFiManager::Scan(const String &ssid)
 {
-   Debugln("开启AP模式...");
-   WiFi.mode(WIFI_MODE_APSTA);
-   WiFi.softAPConfig(s_APIP, s_APGateway, s_APNetMask);
-   if (!WiFi.softAP(s_APSSID))
+   bool Found = false;
+   Serial.println("开始扫描WiFi...");
+   int n = WiFi.scanNetworks();
+   if (n <= 0)
    {
-      Debugln("AP模式启动失败");
+      Serial.println("未扫描到WiFi网络");
+   }
+   else
+   {
+      Serial.print("扫描到 ");
+      Serial.print(n);
+      Serial.println(" 个WiFi：");
+      for (int i = 0; i < n; i++)
+      {
+         Serial.print(i + 1);
+         Serial.print(": ");
+         Serial.print(WiFi.SSID(i));
+         Serial.print(" | 信号强度：");
+         Serial.print(WiFi.RSSI(i));
+         Serial.print("dBm | 加密：");
+         Serial.println(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "开放" : "加密");
+         if (WiFi.SSID(i) == ssid)
+         {
+            Found = true;
+         }
+      }
+   }
+   WiFi.scanDelete();
+   return Found;
+}
+
+void WiFiManager::Connect(String ssid, String pwd)
+{
+   WiFi.mode(WIFI_STA);
+   WiFi.setAutoConnect(true);
+   WiFi.setAutoReconnect(true);
+
+   Serial.print("连接WiFi：");
+   Serial.print(ssid);
+   Serial.print(",");
+   Serial.println(pwd);
+   WiFi.begin(ssid.c_str(), pwd.c_str());
+   mCurState = WiFiState::CONNECTING_STATE;
+}
+
+void WiFiManager::Disconnect()
+{
+   if (WiFi.status() == WL_CONNECTED)
+   {
+      WiFi.disconnect();
+   }
+}
+
+WiFiManager::WiFiManager()
+{
+}
+
+WiFiManager::~WiFiManager()
+{
+}
+
+void WiFiManager::Store(String ssid, String pwd)
+{
+   mStore.begin("WiFi", false);
+   mStore.putString("ssid", ssid);
+   mStore.putString("pwd", pwd);
+   mStore.end();
+   Serial.println("WiFi信息已保存到Flash");
+}
+
+bool WiFiManager::Load()
+{
+   mStore.begin("WiFi", false);
+   String ssid = mStore.getString("ssid", "");
+   String pwd = mStore.getString("pwd", "");
+   mStore.end();
+   if (ssid.isEmpty() || pwd.isEmpty())
+   {
+      Serial.println("Load WiFi信息失败");
       return false;
    }
    else
    {
-      Debugln("AP模式启动成功");
+      mSTASSID = ssid;
+      mSTAPWD = pwd;
+      Serial.println("Load WiFi信息成功");
+      Serial.print(mSTASSID);
+      Serial.print(",");
+      Serial.println(mSTAPWD);
+      // Load成功后判断当前是否有效
+      return (Scan(mSTASSID));
    }
-   Debugln("AP模式启动成功");
-   Debug("AP IP地址: ");
-   Debugln(WiFi.softAPIP());
-   return true;
 }
 
-static bool StartWebServer(void)
+void WiFiManager::CreateAP(const String &ApSsid, const String &ApPwd)
 {
-   // 当浏览器请求服务器根目录(网站首页)时调用自定义函数handleRoot处理，设置主页回调函数，必须添加第二个参数HTTP_GET，否则无法强制门户
-   s_WebServer.on("/", HTTP_GET, WebServerHandleRoot);
-   // 当浏览器请求服务器/configwifi(表单字段)目录时调用自定义函数handleConfigWifi处理
-   s_WebServer.on("/configwifi", HTTP_POST, WebServerHandleConfigWiFi);
-   // 当浏览器请求的网络资源无法在服务器找到时调用自定义函数handleNotFound处理
-   s_WebServer.onNotFound(WebServerHandleNotFound);
-   s_WebServer.begin();
-   Debugln("服务器启动成功！");
-   return true;
+   // 先断开连接，避免之前是STA连接中的状态
+   WiFi.disconnect(true);
+   IPAddress APIP(192, 168, 8, 1);
+   WiFi.mode(WIFI_AP_STA);
+   WiFi.softAPConfig(APIP, APIP, IPAddress(255, 255, 255, 0));
+   WiFi.softAP(ApSsid);
+
+   Serial.print("热点已创建：");
+   Serial.println(ApSsid);
+   Serial.print("IP:");
+   Serial.println(APIP);
+
+   mWebServer.on("/", HTTP_GET, [this]()
+                 { HandleIndex(); }); // 设置主页回调函数
+   mWebServer.on("/configwifi", HTTP_GET, [this]()
+                 { HandleConfigWiFi(); }); // 设置配置WiFi的回调函数
+   mWebServer.on("/wifilist", HTTP_GET, [this]()
+                 { HandleScanWiFi(); }); // 设置刷新请求的回调函数
+   mWebServer.onNotFound([this]()
+                         { HandleIndex(); }); // 设置无法响应的回调函数
+   mWebServer.begin();                        // 启动WebServer
+   Serial.println("WebServer已启动");
+
+   mCurState = WiFiState::AP_SERVER_STATE;
 }
 
-static void WebServerHandleRoot(void)
+void WiFiManager::StateEnter()
 {
-   s_WebServer.send(200, "text/html", g_WebPage1FirstPart + s_WiFiHTMLOptions + g_WebPage1SecondPart);
-}
-
-static void WebServerHandleNotFound(void)
-{
-   WebServerHandleRoot();
-}
-
-static void WebServerHandleConfigWiFi(void)
-{
-   // 判断是否有WiFi名称
-   if (s_WebServer.hasArg("ssid"))
+   switch (mCurState)
    {
-      Debug("获得WiFi名称:");
-      s_WiFiSSID = s_WebServer.arg("ssid");
-      Debugln(s_WiFiSSID);
+   case WiFiState::INIT_STATE:
+   {
+   }
+   break;
+   case WiFiState::AP_SERVER_STATE:
+   {
+      if (mPreState != WiFiState::AP_SERVER_CONFIG_STATE)
+      {
+         CreateAP(mAPSSID, mAPPWD);
+      }
+   }
+   break;
+   case WiFiState::AP_SERVER_CONFIG_STATE:
+   {
+      Serial.println("Start connect");
+      mStartConnectMS = millis();
+   }
+   break;
+   case WiFiState::CONNECTING_STATE:
+   {
+      Connect(mSTASSID, mSTAPWD);
+      mStartConnectMS = millis();
+   }
+   break;
+   default:
+      break;
+   }
+}
+
+void WiFiManager::StateExit()
+{
+   switch (mCurState)
+   {
+   case WiFiState::AP_SERVER_STATE:
+   {
+   }
+   break;
+   case WiFiState::AP_SERVER_CONFIG_STATE:
+   {
+   }
+   break;
+   case WiFiState::CONNECTING_STATE:
+   {
+   }
+   break;
+   case WiFiState::STANDBY_STATE:
+   {
+   }
+   break;
+   default:
+      break;
+   }
+}
+
+void WiFiManager::StateRun()
+{
+   switch (mCurState)
+   {
+   case WiFiState::INIT_STATE:
+   {
+      Init();
+   }
+   break;
+   case WiFiState::AP_SERVER_STATE:
+   {
+      mWebServer.handleClient();
+   }
+   break;
+   case WiFiState::AP_SERVER_CONFIG_STATE:
+   {
+      mWebServer.handleClient();
+      if (IsConnected())
+      {
+         Serial.print("WIFI Connected:");
+         Serial.println(WiFi.localIP());
+         mStartCloseAPMS = millis();
+         // mWebServer.send(200, "text/html", "WiFi连接成功");
+         Store(mSTASSID, mSTAPWD);
+         mNewState = WiFiState::STANDBY_STATE;
+      }
+      else if ((millis() - mStartConnectMS) > mConnectTimeout)
+      {
+         Serial.println("Connect failed");
+         // mWebServer.send(200, "text/html", "WiFi连接失败,请检查密码后重试");
+         mNewState = WiFiState::AP_SERVER_STATE;
+         WiFi.disconnect();
+      }
+   }
+   break;
+   case WiFiState::CONNECTING_STATE:
+   {
+      // 执行连接是否成功的检查
+      if (IsConnected())
+      {
+         Serial.println("连接成功");
+         mNewState = WiFiState::STANDBY_STATE;
+      }
+      else if ((millis() - mStartConnectMS) > mConnectTimeout)
+      {
+         WiFi.disconnect(true);
+         mNewState = WiFiState::STANDBY_STATE;
+      }
+   }
+   break;
+   case WiFiState::STANDBY_STATE:
+   {
+      if (WiFi.getMode() == WIFI_AP_STA)
+      {
+         // 如果前一个状态是AP模式，则需要等待1秒后关闭热点
+         if ((millis() - mStartCloseAPMS) > 1000)
+         {
+            Serial.println("关闭AP热点");
+            WiFi.softAPdisconnect(true);
+            WiFi.mode(WIFI_STA);
+            mWebServer.close();
+         }
+         else
+         {
+            mWebServer.handleClient();
+         }
+      }
+   }
+   default:
+      break;
+   }
+}
+
+void WiFiManager::HandleIndex()
+{
+   mWebServer.send(200, "text/html", gWebServerPage);
+}
+
+void WiFiManager::HandleConfigWiFi()
+{
+   mSTASSID = mWebServer.arg("ssid").c_str();
+   mSTAPWD = mWebServer.arg("pwd");
+   Serial.print(mSTASSID);
+   Serial.print(",");
+   Serial.println(mSTAPWD);
+   WiFi.begin(mWebServer.arg("ssid").c_str(), mWebServer.arg("pwd").c_str(), 1);
+   mNewState = WiFiState::AP_SERVER_CONFIG_STATE;
+}
+
+void WiFiManager::HandleScanWiFi()
+{
+   int n = WiFi.scanNetworks();
+   if (n > 0)
+   {
+      char wifilist[640] = {0};
+      Serial.println("sacn wifi.");
+      for (int i = 0; i < 20; ++i)
+      {
+         sprintf(wifilist, "%s%s%s", wifilist, WiFi.SSID(i).c_str(), ",");
+      }
+      Serial.print(wifilist);
+      mWebServer.send(200, "text/html", wifilist);
    }
    else
    {
-      Debugln("错误, 没有发现WiFi名称");
-      s_WebServer.send(200, "text/html", "<meta charset='UTF-8'>错误, 没有发现WiFi名称");
-      return;
+      Serial.println("no any wifi.");
+      mWebServer.send(200, "text/html", ".nodata");
    }
-   // 判断是否有WiFi密码
-   if (s_WebServer.hasArg("password"))
-   {
-      Debug("获得WiFi密码:");
-      s_WiFiPass = s_WebServer.arg("password");
-      Debugln(s_WiFiPass);
-   }
-   else
-   {
-      Debugln("错误, 没有发现WiFi密码");
-      s_WebServer.send(200, "text/html", "<meta charset='UTF-8'>错误, 没有发现WiFi密码");
-      return;
-   }
-
-   // 将信息存入nvs中
-   // 获得了所需要的一切信息，给客户端回复
-   s_WebServer.send(200, "text/html", "<meta charset='UTF-8'><style type='text/css'>body {font-size: 2rem;}</style><br/><br/>WiFi: " + s_WiFiSSID + "<br/>密码: " + s_WiFiPass + "<br/>已取得相关信息,正在尝试连接,请手动关闭此页面。");
+   WiFi.scanDelete();
 }
